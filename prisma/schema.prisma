@@ -1,0 +1,243 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum AtsType {
+  GREENHOUSE
+  LEVER
+  ASHBY
+  WORKABLE
+}
+
+enum JobSource {
+  COMPANY_BOARD
+  YC_STARTUP
+  HN_HIRING
+}
+
+enum Workplace {
+  REMOTE
+  HYBRID
+  ONSITE
+  UNSPECIFIED
+}
+
+enum Sponsorship {
+  SPONSORS_STATED
+  NO_SPONSORSHIP_STATED
+  LIKELY_HISTORY
+  UNKNOWN
+}
+
+enum ApplicationStatus {
+  SAVED
+  APPLIED
+  INTERVIEWING
+  OFFER
+  REJECTED
+}
+
+enum FilingSource {
+  DOL_LCA
+  USCIS
+}
+
+model User {
+  id                    String           @id @default(cuid())
+  name                  String?
+  email                 String           @unique
+  emailVerified         DateTime?
+  image                 String?
+  passwordHash          String?
+  createdAt             DateTime         @default(now())
+  lastVisitedAt         DateTime?
+  humanizationIntensity String           @default("MEDIUM")
+  humanizerKey          String?          // AES-256-GCM encrypted; never returned to client
+  detectorKey           String?
+  humanizerUrl          String?
+  detectorUrl           String?
+  accounts              Account[]
+  sessions              Session[]
+  companies             TrackedCompany[]
+  jobs                  Job[]
+  saved                 SavedJob[]
+  applications          Application[]
+  resumes               Resume[]
+  runs                  SourceRun[]
+}
+
+model Account {
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?  @db.Text
+  access_token      String?  @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?  @db.Text
+  session_state     String?
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@id([provider, providerAccountId])
+}
+
+model Session {
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+  @@id([identifier, token])
+}
+
+model TrackedCompany {
+  id                String    @id @default(cuid())
+  userId            String
+  name              String
+  atsType           AtsType
+  boardSlug         String
+  careersUrl        String?
+  website           String?
+  ycBatch           String?
+  ycUrl             String?
+  industry          String?
+  teamSize          Int?
+  employerOverride  String?   // exact normalized name in imported government data
+  active            Boolean   @default(true)
+  createdAt         DateTime  @default(now())
+  lastFetchedAt     DateTime?
+  lastError         String?
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  jobs              Job[]
+  @@unique([userId, atsType, boardSlug])
+  @@index([userId, name])
+}
+
+model Job {
+  id              String       @id @default(cuid())
+  userId          String
+  companyId       String?
+  companyName     String
+  title           String
+  source          JobSource
+  atsType         AtsType?
+  externalId      String
+  originalUrl     String       @db.Text
+  canonicalKey    String       // normalized exact job URL hash (user scoped)
+  sourceUrl       String?      @db.Text  // YC profile / board / HN comment
+  hnUrl           String?      @db.Text
+  description     String       @db.Text
+  department      String?
+  location        String?
+  workplace       Workplace    @default(UNSPECIFIED)
+  ycBatch         String?
+  companySize     Int?
+  postedAt        DateTime?
+  firstSeenAt     DateTime     @default(now())
+  lastSeenAt      DateTime     @default(now())
+  closedAt        DateTime?
+  sponsorship     Sponsorship  @default(UNKNOWN)
+  sponsorshipEvidence String?  @db.Text
+  evidenceSource  String?
+  user            User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  company         TrackedCompany? @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  saved           SavedJob?
+  applications    Application[]
+  resumes         Resume[]
+  @@unique([userId, canonicalKey])
+  @@index([userId, source, closedAt, postedAt])
+  @@index([userId, companyId])
+}
+
+model SavedJob {
+  id        String   @id @default(cuid())
+  userId    String
+  jobId     String   @unique
+  notes     String   @default("") @db.Text
+  tags      String[] @default([])
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  job       Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  @@index([userId])
+}
+
+model Application {
+  id          String            @id @default(cuid())
+  userId      String
+  jobId       String?
+  title       String
+  companyName String
+  status      ApplicationStatus @default(SAVED)
+  appliedAt   DateTime?
+  followUpAt  DateTime?
+  resumeId    String?
+  notes       String            @default("") @db.Text
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+  user        User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  job         Job?              @relation(fields: [jobId], references: [id], onDelete: SetNull)
+  resume      Resume?           @relation(fields: [resumeId], references: [id], onDelete: SetNull)
+  @@index([userId, status])
+  @@index([userId, followUpAt])
+}
+
+model Resume {
+  id           String    @id @default(cuid())
+  userId       String
+  name         String
+  content      String    @db.Text
+  filename     String?
+  mimeType     String?
+  version      Int       @default(1)
+  parentId     String?
+  jobId        String?
+  atsScore     Int?
+  aiLikelihood Int?
+  createdAt    DateTime  @default(now())
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  parent       Resume?   @relation("Versions", fields: [parentId], references: [id], onDelete: SetNull)
+  versions     Resume[]  @relation("Versions")
+  job          Job?      @relation(fields: [jobId], references: [id], onDelete: SetNull)
+  applications Application[]
+  @@index([userId, createdAt])
+}
+
+model VisaFiling {
+  id                 String       @id @default(cuid())
+  externalKey        String       @unique
+  source             FilingSource
+  sourceUrl          String       @db.Text
+  employerName       String
+  employerNormalized String
+  fiscalYear         Int
+  title              String?
+  worksite           String?
+  wage               Float?       // annual USD when convertible; otherwise null
+  approvals          Int?
+  denials            Int?
+  @@index([employerNormalized, fiscalYear])
+}
+
+model SourceRun {
+  id        String   @id @default(cuid())
+  userId    String
+  startedAt DateTime @default(now())
+  endedAt   DateTime?
+  added     Int      @default(0)
+  updated   Int      @default(0)
+  closed    Int      @default(0)
+  errors    String[] @default([])
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@index([userId, startedAt])
+}
