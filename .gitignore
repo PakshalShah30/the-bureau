@@ -1,0 +1,10 @@
+node_modules/
+.next/
+.env
+.env.local
+.data/
+# Locally downloaded government files (potentially very large)
+data/
+*.tsbuildinfo
+coverage/
+.DS_Store

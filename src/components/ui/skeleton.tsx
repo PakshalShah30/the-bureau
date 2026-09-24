@@ -1,0 +1,3 @@
+import { cn } from "@/lib/utils";
+export function Skeleton({ className }: { className?: string }) { return <div aria-hidden="true" className={cn("animate-pulse rounded-lg bg-muted", className)} />; }
+export function LoadingCards({ count = 4 }: { count?: number }) { return <div role="status" aria-label="Loading" className="space-y-3">{Array.from({ length: count }, (_, i) => <div key={i} className="surface flex gap-4 p-5"><Skeleton className="h-12 w-12 shrink-0" /><div className="flex-1 space-y-3"><Skeleton className="h-3 w-28" /><Skeleton className="h-5 w-3/5" /><Skeleton className="h-3 w-2/5" /></div></div>)}<span className="sr-only">Loading...</span></div>; }
