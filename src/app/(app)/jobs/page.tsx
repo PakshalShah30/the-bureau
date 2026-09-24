@@ -5,7 +5,7 @@ import Link from "next/link";
 import { formatDistanceToNow } from "date-fns";
 import { Search, SlidersHorizontal, RotateCw, X, ChevronLeft, ChevronRight, BriefcaseBusiness, Sparkles, MapPin } from "lucide-react";
 import { toast } from "sonner";
-import type { Job, SourceRun } from "@/lib/types";
+import type { Job, Resume, SourceRun } from "@/lib/types";
 import { request } from "@/lib/client";
 import { Button } from "@/components/ui/button";
 import { Input, Select } from "@/components/ui/input";
@@ -14,13 +14,15 @@ import { JobCard } from "@/components/jobs/job-card";
 import { LoadingCards } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/layout/empty-state";
 import { PageHeading } from "@/components/layout/page-heading";
-type Feed = { jobs: Job[]; total: number; pages: number; page: number; facets: { companies: string[]; batches: string[]; departments: string[] }; lastRun: SourceRun | null; demo: boolean };
+type Feed = { jobs: Job[]; total: number; pages: number; page: number; facets: { companies: string[]; batches: string[]; departments: string[] }; lastRun: SourceRun | null; demo: boolean; fitResume?: { id: string; name: string } | null };
 function FeedPage() {
   const router = useRouter(), params = useSearchParams(); const query = params.toString();
   const [data, setData] = useState<Feed | null>(null), [loading, setLoading] = useState(true), [refreshing, setRefreshing] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false), [search, setSearch] = useState(params.get("q") || "");
   const load = useCallback(async () => { setLoading(true); try { setData(await request<Feed>(`/api/jobs?${query}`)); } catch (e) { toast.error(e instanceof Error ? e.message : "Unable to load jobs"); } finally { setLoading(false); } }, [query]);
   useEffect(() => { load(); }, [load]);
+  const [resumes, setResumes] = useState<Resume[]>([]);
+  useEffect(() => { request<{ resumes: Resume[] }>("/api/resumes").then(r => setResumes(r.resumes)).catch(() => setResumes([])); }, []);
   useEffect(() => { setSearch(params.get("q") || ""); }, [query, params]);
   function set(key: string, value: string | boolean) {
     const next = new URLSearchParams(query);
@@ -63,7 +65,8 @@ function FeedPage() {
           <div className="flex items-center justify-between border-t border-border pt-4"><label htmlFor="saved-switch" className="text-xs font-semibold">Saved only</label><Switch id="saved-switch" checked={params.get("saved") === "true"} onCheckedChange={v => set("saved", v)} /></div>
         </div>
       </aside>
-      <section aria-label="Job results"><div className="mb-3 flex items-center justify-between gap-2"><div className="flex items-baseline gap-2"><h2 className="font-display text-[17px] font-bold">Open roles</h2><span className="text-[12px] text-muted-foreground">{data ? `${data.total} results` : "Loading…"}</span></div><span className="text-[11px] text-muted-foreground">Newest first</span></div>
+      <section aria-label="Job results"><div className="mb-3 flex items-center justify-between gap-2"><div className="flex items-baseline gap-2"><h2 className="font-display text-[17px] font-bold">Open roles</h2><span className="text-[12px] text-muted-foreground">{data ? `${data.total} results` : "Loading…"}</span></div><label className="flex items-center gap-2 text-[11px] text-muted-foreground"><span className="hidden sm:inline">Sort</span><Select aria-label="Sort jobs" className="h-8 w-auto max-w-[220px] py-0 text-[12px]" value={params.get("resumeId") || ""} onChange={e => set("resumeId", e.target.value)}><option value="">Newest first</option>{resumes.map(r => <option key={r.id} value={r.id}>Best fit · {r.name}</option>)}</Select></label></div>
+        {data?.fitResume && <p className="mb-3 text-[11px] text-muted-foreground">Ranked by skill match with <b className="text-foreground">{data.fitResume.name}</b>. Nice-to-have skills count half; roles whose listing names no skills we recognise go last.</p>}
         {data && <div className="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-border bg-card px-3.5 py-2.5 text-[11px] text-muted-foreground"><span className="h-1.5 w-1.5 rounded-full bg-[#4db98c]" />{data.demo ? "Verified snapshot · checked Sep 23, 2026 (not live in this preview)" : data.lastRun ? `Last checked ${formatDistanceToNow(new Date(data.lastRun.endedAt || data.lastRun.startedAt), { addSuffix: true })}` : "Run a refresh to pull current postings from official sources"}{data.lastRun?.errors.length ? <span className="font-semibold text-amber-600">· {data.lastRun.errors.length} source(s) unavailable</span> : null}</div>}
         {loading ? <LoadingCards count={5} /> : !data?.jobs.length ? <EmptyState icon={<BriefcaseBusiness size={24} />} title="No roles match just yet" description={hasFilters ? "Try clearing a filter or checking another location. New opportunities arrive with every refresh." : "Start by tracking a company career board, or refresh to check official sources."} action={<Button asChild size="sm"><Link href={hasFilters ? "/jobs" : "/companies"}>{hasFilters ? "Clear filters" : "Track a company"}<ChevronRight size={15} /></Link></Button>} /> : <div className="space-y-3">{data.jobs.map(job => <JobCard key={job.id} job={job} />)}</div>}
         {data && data.pages > 1 && <div className="mt-6 flex items-center justify-between"><span className="text-xs text-muted-foreground">Page {data.page} of {data.pages}</span><div className="flex gap-2"><Button variant="outline" size="sm" disabled={data.page <= 1} onClick={() => set("page", String(data.page - 1))}><ChevronLeft size={15} /> Previous</Button><Button variant="outline" size="sm" disabled={data.page >= data.pages} onClick={() => set("page", String(data.page + 1))}>Next <ChevronRight size={15} /></Button></div></div>}

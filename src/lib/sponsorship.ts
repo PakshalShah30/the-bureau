@@ -5,8 +5,11 @@ export type SponsorshipSignal = { status: Sponsorship; evidence: string | null; 
 export function sentences(text: string) {
   return text.replace(/\r/g, "").split(/\n+|(?<=[.!?])\s+(?=[A-Z])/).map(s => s.trim()).filter(Boolean);
 }
-const negative = /\b(no\s+(?:new\s+)?(?:visa|work\s+visa|h[\s-]?1b|immigration)\s+sponsorship|(?:visa|h[\s-]?1b|work\s+authorization)\s+sponsorship\s+(?:is\s+)?(?:not|unavailable)|(?:cannot|can't|do\s+not|don't|does\s+not|doesn't|unable\s+to|not\s+(?:currently\s+)?able\s+to|won't|will\s+not)\s+(?:provide|offer|support|sponsor|consider)\s+.{0,40}(?:visa|sponsorship)|without\s+(?:current\s+or\s+future\s+)?(?:requiring\s+)?(?:employer\s+)?sponsorship|(?:us|u\.s\.)\s+citizens?\s+only|(?:us|u\.s\.)\s+citizens?\s+(?:and|or|\/|,)\s+(?:permanent\s+residents?|green\s+card\s+holders?)\s+only|must\s+(?:be\s+)?(?:currently\s+)?authorized\s+to\s+work\s+.{0,40}without\s+sponsorship|sponsorship\s+(?:is\s+)?not\s+(?:available|offered)|(?:visa|h[\s-]?1b)\s+sponsorship\s*:\s*(?:no|none)|VISA\s*:\s*(?:no|none|not\s+available))\b/i;
-const positive = /\b(?:(?:visa|h[\s-]?1b|immigration)\s+sponsorship\s+(?:is\s+)?(?:available|provided|offered|possible|covered|supported|übernehmen|uebernehmen)|(?:we|this\s+role|company)\s+(?:will|can|do)\s+(?:provide|offer|support|sponsor)\s+.{0,35}(?:visa|h[\s-]?1b)|(?:relocation\s+and\s+)?visa\s+sponsorship\s+(?:covered|possible)|(?:visa|h[\s-]?1b)\s+sponsorship\s*:\s*(?:yes|available|possible)|VISA\s*:\s*(?:yes|available|sponsorship))\b/i;
+// Visa words, singular or plural ("visa", "visas", "H-1B", "H1-B").
+const VISA = String.raw`(?:visas?|work\s+visas?|h[\s-]?1[\s-]?b|immigration)`;
+const NOT = String.raw`(?:cannot|can't|can\s+not|do\s+not|don't|does\s+not|doesn't|unable\s+to|(?:are|is)\s+not\s+(?:currently\s+)?(?:able|in\s+a\s+position)\s+to|not\s+(?:currently\s+)?able\s+to|won't|will\s+not|are\s+not|is\s+not)`;
+const negative = new RegExp(String.raw`\b(?:no\s+(?:new\s+)?${VISA}\s+sponsorship|(?:${VISA}|work\s+authorization)\s+sponsorship\s+(?:is\s+)?(?:not|unavailable)|${NOT}\s+(?:currently\s+)?(?:provide|offer|support|sponsor|consider)s?\b.{0,40}?(?:${VISA}|sponsorship)|${NOT}\s+(?:currently\s+)?sponsor(?:ing)?(?:\s+(?:candidates|applicants|employees|anyone|for\s+this\s+(?:role|position)|at\s+this\s+time))*\s*(?:[.,;!)]|$)|not\s+(?:open|willing)\s+to\s+sponsor(?:ing)?|not\s+eligible\s+for\s+(?:${VISA}\s+)?sponsorship|without\s+(?:the\s+need\s+for\s+)?(?:current\s+or\s+future\s+)?(?:requiring\s+)?(?:employer\s+|visa\s+)?sponsorship|(?:us|u\.s\.)\s+citizens?\s+only|(?:us|u\.s\.)\s+citizens?\s+(?:and|or|\/|,)\s+(?:permanent\s+residents?|green\s+card\s+holders?)\s+only|must\s+(?:be\s+)?(?:currently\s+)?authorized\s+to\s+work\s+.{0,40}without\s+sponsorship|sponsorship\s+(?:is\s+)?not\s+(?:available|offered|provided|possible)|(?:${VISA})\s+sponsorship\s*:\s*(?:no|none)|VISA\s*:\s*(?:no|none|not\s+available))(?![a-z])`, "i");
+const positive = new RegExp(String.raw`\b(?:${VISA}\s+sponsorship\s+(?:is\s+)?(?:available|provided|offered|possible|covered|supported|übernehmen|uebernehmen)|(?:we|this\s+role|the\s+company|company|employer)\s+(?:will\s+|can\s+|do\s+|does\s+|may\s+|are\s+able\s+to\s+|is\s+able\s+to\s+)?(?:provide|offer|support|sponsor)s?\s+.{0,35}?(?:${VISA})|(?:open|happy|willing|able)\s+to\s+sponsor(?:ing)?\b|(?:relocation\s+and\s+)?visa\s+sponsorship\s+(?:covered|possible)|(?:${VISA})\s+sponsorship\s*:\s*(?:yes|available|possible)|VISA\s*:\s*(?:yes|available|sponsorship))(?![a-z])`, "i");
 export function statedSponsorship(description: string): SponsorshipSignal {
   const parts = sentences(description);
   // A negative in the same sentence takes precedence over a positive token.
@@ -44,11 +47,19 @@ export function recentFilings(filings: VisaFiling[], company: string, override?:
   const minYear = year - 2;
   return filings.filter(f => f.fiscalYear >= minYear && f.fiscalYear <= year && employerMatches(company, f.employerName, override));
 }
+/**
+ * Employer history counts as a sponsorship signal only when it shows sponsorship
+ * actually happening: a certified LCA or at least one USCIS approval. A company
+ * whose recent record is only denials is NOT a likely sponsor.
+ */
+export function hasSponsorHistory(filings: VisaFiling[]) {
+  return filings.some(f => f.source === "DOL_LCA" || (f.approvals || 0) > 0);
+}
 export function resolveSponsorship(description: string, filings: VisaFiling[], company: string, override?: string | null): SponsorshipSignal {
   const signal = statedSponsorship(description);
   if (signal.status !== "UNKNOWN") return signal;
   const recent = recentFilings(filings, company, override);
-  if (recent.some(f => f.source === "DOL_LCA" || (f.approvals || 0) > 0))
+  if (hasSponsorHistory(recent))
     return { status: "LIKELY_HISTORY", evidence: null, evidenceSource: "DOL / USCIS employer history" };
   return signal;
 }

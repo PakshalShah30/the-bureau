@@ -1,7 +1,7 @@
 import { store } from "./store";
 import { fetchBoard, postingToJob } from "./sources/ats";
 import { fetchLatestHnThread } from "./sources/hn";
-import { recentFilings, resolveSponsorship } from "./sponsorship";
+import { hasSponsorHistory, recentFilings, resolveSponsorship } from "./sponsorship";
 import { llm } from "./ai/providers";
 import type { JobInput, SourceRun, VisaFiling } from "./types";
 import { iso } from "./utils";
@@ -18,7 +18,9 @@ async function sponsorshipFor(job: JobInput, filings: VisaFiling[], employerOver
     } catch { /* Rule-based classifier remains authoritative when model unavailable. */ }
   }
   // Explicit statements always override history; history only from imported government rows.
-  if (signal.status === "UNKNOWN" && recentFilings(filings, job.companyName, employerOverride).length)
+  // (bug fix) this used to accept ANY recent filing, so an employer with only USCIS
+  // denials was labelled a likely sponsor. Use the same rule as resolveSponsorship.
+  if (signal.status === "UNKNOWN" && hasSponsorHistory(recentFilings(filings, job.companyName, employerOverride)))
     signal = { status: "LIKELY_HISTORY", evidence: null, evidenceSource: "DOL / USCIS employer history" };
   return { ...job, sponsorship: signal.status, sponsorshipEvidence: signal.evidence, evidenceSource: signal.evidenceSource };
 }

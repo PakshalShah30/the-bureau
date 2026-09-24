@@ -20,6 +20,8 @@ export interface Job {
   firstSeenAt: string; lastSeenAt: string; closedAt: string | null;
   sponsorship: Sponsorship; sponsorshipEvidence: string | null; evidenceSource: string | null;
   saved?: boolean;
+  /** Present when the feed is ranked against a resume (?resumeId=…). */
+  fit?: { score: number; matched: number; total: number; missingRequired: string[] } | null;
 }
 export interface SavedJob {
   id: string; userId: string; jobId: string; notes: string; tags: string[]; createdAt: string;
@@ -59,4 +61,5 @@ export type JobFilters = {
   q?: string; company?: string; source?: string; batch?: string; size?: string;
   location?: string; workplace?: string; department?: string; days?: string;
   sponsorship?: string; friendly?: boolean; saved?: boolean; closed?: boolean;
+  minFit?: number;
 };

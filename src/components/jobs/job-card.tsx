@@ -50,6 +50,7 @@ export function JobCard({ job, compact = false, onSave }: { job: Job; compact?: 
     <div className={cn("flex flex-wrap items-center gap-2", compact ? "mt-3" : "mt-4 border-t border-border/70 pt-4")}>
       <SourceBadge source={job.source} batch={!compact ? job.ycBatch : null} />
       <SponsorBadge status={job.sponsorship} compact={compact} />
+      {job.fit !== undefined && <FitBadge fit={job.fit} />}
       {!!job.closedAt && <span className="rounded-full border border-border px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">Closed</span>}
       {!compact && job.department && <span className="text-xs text-muted-foreground">{job.department}</span>}
     </div>
@@ -58,4 +59,14 @@ export function JobCard({ job, compact = false, onSave }: { job: Job; compact?: 
       {job.hnUrl && <a href={job.hnUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-muted-foreground hover:text-primary hover:underline">Original HN comment <ArrowUpRight size={13} /></a>}
     </div>
   </article>;
+}
+
+/** Skill-match badge shown when the feed is ranked against a resume. */
+export function FitBadge({ fit }: { fit: Job["fit"] }) {
+  if (!fit) return <span title="This listing names no skills we recognise" className="rounded-full border border-border px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">Fit unknown</span>;
+  const tone = fit.score >= 70 ? "border-[#b9dec7] bg-[#e9f7ef] text-[#1e7f59] dark:bg-[#244636] dark:text-[#84d8ab]"
+    : fit.score >= 40 ? "border-[#e9dbc0] bg-[#fff8ec] text-[#a27532] dark:bg-[#3e3629] dark:text-[#e7c38a]"
+    : "border-border bg-muted text-muted-foreground";
+  const gaps = fit.missingRequired.length ? ` · missing ${fit.missingRequired.join(", ")}` : "";
+  return <span title={`${fit.matched} of ${fit.total} listed skills on your resume${gaps}`} className={cn("rounded-full border px-2 py-0.5 text-[10px] font-bold", tone)}>{fit.score}% fit</span>;
 }
