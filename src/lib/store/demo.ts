@@ -4,10 +4,12 @@ import { demoApplications, demoCompanies, demoJobs, demoResumes, demoUser } from
 import type { Application, ApplicationInput, Company, CompanyInput, Job, JobInput, Resume, ResumeInput, SavedJob, SourceRun, UserRecord, VisaFiling } from "../types";
 import { id, iso } from "../utils";
 import { employerMatches } from "../sponsorship";
+import { sampleFilings } from "../h1b-sample";
+import { mergedSponsorship, pickSameRole } from "../dedupe";
 
 type State = { users: UserRecord[]; companies: Company[]; jobs: Job[]; saved: SavedJob[]; applications: Application[]; resumes: Resume[]; filings: VisaFiling[]; runs: SourceRun[] };
 const file = join(process.cwd(), ".data", "demo.json");
-function initial(): State { return { users: [demoUser], companies: demoCompanies, jobs: demoJobs, saved: [], applications: demoApplications, resumes: demoResumes, filings: [], runs: [] }; }
+function initial(): State { return { users: [demoUser], companies: demoCompanies, jobs: demoJobs, saved: [], applications: demoApplications, resumes: demoResumes, filings: sampleFilings(), runs: [] }; }
 const globalState = globalThis as typeof globalThis & { __bureauDemo?: State };
 function state(): State {
   if (!globalState.__bureauDemo) {
@@ -21,6 +23,7 @@ function persist() {
   const temp = `${file}.tmp`;
   writeFileSync(temp, JSON.stringify(state())); renameSync(temp, file);
 }
+const demoLocks = new Map<string, number>();
 export const demoStore = {
   async getUser(uid: string) { return state().users.find(u => u.id === uid) || null; },
   async getUserByEmail(email: string) { return state().users.find(u => u.email.toLowerCase() === email.toLowerCase()) || null; },
@@ -62,19 +65,25 @@ export const demoStore = {
     const job = state().jobs.find(j => j.userId === uid && j.id === jid);
     return job ? { ...job, saved: state().saved.some(s => s.jobId === jid && s.userId === uid) } : null;
   },
-  async upsertJob(uid: string, input: JobInput): Promise<{ job: Job; created: boolean }> {
-    const existing = state().jobs.find(j => j.userId === uid && j.canonicalKey === input.canonicalKey);
+  async upsertJob(uid: string, input: JobInput, opts: { fuzzy?: boolean } = {}): Promise<{ job: Job; created: boolean }> {
+    let existing = state().jobs.find(j => j.userId === uid && j.canonicalKey === input.canonicalKey);
+    // Cross-source dedupe (same company + role): the first-party board posting stays canonical.
+    if (!existing && opts.fuzzy) existing = pickSameRole(input, state().jobs.filter(j => j.userId === uid && !j.closedAt &&
+      (input.source === "HN_HIRING" ? j.source !== "HN_HIRING" : j.source === "HN_HIRING"))) || undefined;
     if (existing) {
       if (input.source === "HN_HIRING" && existing.source !== "HN_HIRING") {
         existing.hnUrl = input.hnUrl; // keep original first-party ATS posting as canonical
+        Object.assign(existing, mergedSponsorship(existing, input));
       } else {
+        const hnPolicy = existing.source === "HN_HIRING" && input.source !== "HN_HIRING" ? mergedSponsorship(input, existing) : null;
         const source = existing.source === "YC_STARTUP" && input.source === "COMPANY_BOARD" ? "YC_STARTUP" : input.source;
         Object.assign(existing, { ...input, source, description: input.description || existing.description,
           hnUrl: input.hnUrl || existing.hnUrl, sponsorship: input.description ? input.sponsorship : existing.sponsorship,
           sponsorshipEvidence: input.description ? input.sponsorshipEvidence : existing.sponsorshipEvidence,
-          evidenceSource: input.description ? input.evidenceSource : existing.evidenceSource });
+          evidenceSource: input.description ? input.evidenceSource : existing.evidenceSource }, hnPolicy);
       }
-      existing.lastSeenAt = iso(); existing.closedAt = null; persist(); return { job: existing, created: false };
+      // A live fetch replaces the dated preview snapshot.
+      existing.lastSeenAt = iso(); existing.closedAt = null; existing.snapshotAt = null; persist(); return { job: existing, created: false };
     }
     const job: Job = { ...input, id: id(), userId: uid, firstSeenAt: iso(), lastSeenAt: iso(), closedAt: null };
     state().jobs.push(job); persist(); return { job, created: true };
@@ -143,6 +152,17 @@ export const demoStore = {
   async insertFilings(rows: VisaFiling[]) {
     const keys = new Set(state().filings.map(f => f.externalKey));
     const fresh = rows.filter(r => !keys.has(r.externalKey)); state().filings.push(...fresh); persist(); return fresh.length;
+  },
+  async acquireRefreshLock(uid: string, ms: number) {
+    const until = demoLocks.get(uid);
+    if (until && until > Date.now()) return false;
+    demoLocks.set(uid, Date.now() + ms); return true;
+  },
+  async releaseRefreshLock(uid: string) { demoLocks.delete(uid); },
+  async lastRefreshTimes() {
+    const map = new Map<string, string | null>();
+    for (const run of state().runs) if (!map.get(run.userId) || map.get(run.userId)! < run.startedAt) map.set(run.userId, run.startedAt);
+    return map;
   },
   async lastRun(uid: string) { return state().runs.filter(r => r.userId === uid).sort((a, b) => b.startedAt.localeCompare(a.startedAt))[0] || null; },
   async recordRun(uid: string, input: Omit<SourceRun, "id" | "userId">) {

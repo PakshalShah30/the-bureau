@@ -5,7 +5,8 @@
  */
 import type { Application, Company, Job, Resume, UserRecord, AtsType, JobSource, Workplace } from "./types";
 import { jobKey } from "./urls";
-import { statedSponsorship } from "./sponsorship";
+import { resolveSponsorship } from "./sponsorship";
+import { sampleFilings } from "./h1b-sample";
 
 const checked = "2026-09-23T20:00:00.000Z";
 type Row = [string, AtsType, string, string?, string?, string?, number?, string?];
@@ -74,14 +75,14 @@ const fixtures: JobFixture[] = [
 ];
 export const demoJobs: Job[] = fixtures.map(row => {
   const co = demoCompanies.find(c => c.name === row.company)!;
-  const signal = statedSponsorship(row.description);
+  const signal = resolveSponsorship(row.description, sampleFilings(), co.name);
   return { id: `job-${row.externalId}`, userId: "demo", companyId: co.id, companyName: co.name,
     title: row.title, source: row.source || (co.ycBatch ? "YC_STARTUP" : "COMPANY_BOARD"),
     atsType: co.atsType, externalId: row.externalId, originalUrl: row.url, canonicalKey: jobKey(row.url),
     sourceUrl: row.hnUrl ? "https://news.ycombinator.com/item?id=49522897" : co.ycUrl || co.careersUrl, hnUrl: row.hnUrl || null,
     description: row.description, department: row.department, location: row.location, workplace: row.workplace,
     ycBatch: co.ycBatch, companySize: co.teamSize, postedAt: new Date(row.postedAt).toISOString(),
-    firstSeenAt: checked, lastSeenAt: checked, closedAt: null,
+    firstSeenAt: checked, lastSeenAt: checked, closedAt: null, snapshotAt: checked,
     sponsorship: signal.status, sponsorshipEvidence: signal.evidence, evidenceSource: signal.evidenceSource };
 });
 export const demoUser: UserRecord = { id: "demo", email: "demo@thebureau.app", name: "Alex Morgan", passwordHash: null,

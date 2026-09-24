@@ -57,6 +57,9 @@ async function main() {
     if (args[i] === "--lca" && args[i + 1]) await importFile(args[++i], "lca");
     else if (args[i] === "--uscis" && args[i + 1]) await importFile(args[++i], "uscis");
   }
+  // Official data replaces the illustrative seed rows entirely.
+  const removed = await prisma.visaFiling.deleteMany({ where: { isSample: true } });
+  if (removed.count) console.log(`Removed ${removed.count} illustrative sample filing rows.`);
   console.log("Refresh jobs to recompute sponsorship badges. Explicit job policies always override employer history.");
 }
 if (process.argv[1]?.endsWith("import-h1b.ts")) main().catch(e => { console.error(e); process.exitCode = 1; }).finally(() => prisma.$disconnect());

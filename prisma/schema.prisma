@@ -56,6 +56,7 @@ model User {
   passwordHash          String?
   createdAt             DateTime         @default(now())
   lastVisitedAt         DateTime?
+  refreshLockedUntil    DateTime?        // refresh lease shared by all server instances
   humanizationIntensity String           @default("MEDIUM")
   humanizerKey          String?          // AES-256-GCM encrypted; never returned to client
   detectorKey           String?
@@ -226,7 +227,9 @@ model VisaFiling {
   wage               Float?       // annual USD when convertible; otherwise null
   approvals          Int?
   denials            Int?
+  isSample           Boolean      @default(false) // illustrative seed rows, never government data
   @@index([employerNormalized, fiscalYear])
+  @@index([isSample])
 }
 
 model SourceRun {

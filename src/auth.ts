@@ -5,6 +5,7 @@ import { PrismaAdapter } from "@auth/prisma-adapter";
 import { compare } from "bcryptjs";
 import { isDemo, store } from "@/lib/store";
 import { prisma } from "@/lib/store/prisma";
+import { authSecret } from "@/lib/auth-secret";
 
 const providers = [
   Credentials({ name: "Email and password", credentials: { email: { label: "Email", type: "email" }, password: { label: "Password", type: "password" } },
@@ -22,7 +23,7 @@ const providers = [
   })] : []),
 ];
 export const { handlers, auth, signIn, signOut } = NextAuth({
-  secret: process.env.AUTH_SECRET || (isDemo ? "preview-only-do-not-use-in-production-64f8ad" : undefined),
+  secret: authSecret(),
   trustHost: true,
   adapter: isDemo ? undefined : PrismaAdapter(prisma),
   session: { strategy: "jwt" },

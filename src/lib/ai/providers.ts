@@ -1,6 +1,7 @@
 import type { Intensity } from "../types";
 import { decrypt } from "../secrets";
 import { assertPublicHost } from "../network";
+import { builtInHumanize } from "./humanize";
 
 export interface LLMProvider {
   completeJson<T>(system: string, user: string): Promise<T>;
@@ -30,36 +31,46 @@ export interface HumanizerProvider {
 export interface DetectorProvider {
   score(text: string): Promise<number>; // 0-100 heuristic/third-party estimate, NOT detection proof
 }
-export function builtInHumanize(text: string) {
-  return text.replace(/\bspearheaded\b/gi, "Led").replace(/\bleveraged\b/gi, "used")
-    .replace(/\butilized\b/gi, "used").replace(/\bseamlessly\s+/gi, "")
-    .replace(/\bdynamic\s+/gi, "").replace(/\bresults-driven\s+/gi, "")
-    .replace(/\bpassionate about\b/gi, "focused on").replace(/\s{2,}/g, " ").trim();
-}
+export { builtInHumanize };
 export const builtInHumanizer: HumanizerProvider = {
   async humanize(original, proposal, intensity, keywords) {
-    const cleaned = builtInHumanize(proposal);
+    const cleaned = builtInHumanize(proposal, { intensity, keepTerms: keywords });
     if (!process.env.LLM_API_KEY || intensity === "LIGHT") return cleaned;
     try {
       const answer = await llm.completeJson<{ text: string }>(
         "You are a careful resume editor. JSON only: {\"text\":\"...\"}. Rewrite ONLY the given bullet naturally. Vary structure, avoid generic AI phrasing, use concrete nouns and resume shorthand. Preserve every original fact, employer, title, number, date, tool and achievement. Do not add a skill. Keep all required ATS keywords when they are truthful. Strong intensity is concise and conversational, Medium is polished, Light is minimal. If uncertain, return the original bullet unchanged.",
         JSON.stringify({ original, proposal: cleaned, intensity, mustKeepKeywords: keywords })
       );
-      return typeof answer.text === "string" ? builtInHumanize(answer.text) : cleaned;
+      return typeof answer.text === "string" && answer.text.trim() ? builtInHumanize(answer.text, { intensity, keepTerms: keywords }) : cleaned;
     } catch { return cleaned; } // built-in fallback on network/provider failure
   },
 };
+const DETECTOR_CLICHES = /\b(spearheaded|leveraged|leveraging|utilized|seamless(?:ly)?|dynamic|results-driven|passionate about|cutting-edge|robust|innovative|fast-paced|synerg\w*|orchestrated|meticulous(?:ly)?|pivotal|testament|delve[ds]?|state-of-the-art|best-in-class|world-class|fostered)\b/gi;
 export const builtInDetector: DetectorProvider = {
+  // Transparent writing-pattern heuristic (stock phrasing, repeated openers, uniform rhythm).
   async score(text) {
     if (!text.trim()) return 0;
-    const bullets = text.split(/\n/).filter(line => /^\s*[-•*]/.test(line));
-    const cliches = (text.match(/\b(spearheaded|leveraged|seamlessly|dynamic|results-driven|passionate about|cutting-edge|robust|innovative|fast-paced)\b/gi) || []).length;
-    const sameStart = bullets.map(b => b.replace(/^\s*[-•*]\s*/, "").split(" ")[0].toLowerCase());
-    const repeats = sameStart.length - new Set(sameStart).size;
-    const uniform = bullets.length >= 3 && Math.max(...bullets.map(b => b.length)) - Math.min(...bullets.map(b => b.length)) < 25;
-    return Math.min(100, Math.round(18 + cliches * 15 + repeats * 12 + (uniform ? 12 : 0)));
+    const lines = text.split(/\n/).map(l => l.trim()).filter(Boolean);
+    const bullets = lines.filter(line => /^[-•*·▪◦]/.test(line)).map(b => b.replace(/^[-•*·▪◦]\s*/, ""));
+    const sentences = (bullets.length ? bullets : text.split(/(?<=[.!?])\s+/)).map(s => s.trim()).filter(s => s.split(/\s+/).length > 2);
+    const words = Math.max(1, text.split(/\s+/).length);
+    const cliches = (text.match(DETECTOR_CLICHES) || []).length;
+    const starts = sentences.map(b => b.split(/\s+/)[0].toLowerCase());
+    const repeats = starts.length - new Set(starts).size;
+    const lengths = sentences.map(s => s.split(/\s+/).length);
+    const mean = lengths.reduce((a, b) => a + b, 0) / Math.max(1, lengths.length);
+    const spread = lengths.length >= 3 ? Math.sqrt(lengths.reduce((a, b) => a + (b - mean) ** 2, 0) / lengths.length) / Math.max(1, mean) : 1;
+    const uniform = lengths.length >= 3 && spread < 0.18;
+    const noSpecifics = sentences.length > 0 && !/\d/.test(text) && !/\b[A-Z][a-zA-Z]+[A-Z.]/.test(text);
+    const density = Math.min(30, Math.round((cliches / words) * 400));
+    return Math.max(0, Math.min(100, Math.round(12 + cliches * 10 + density + repeats * 12 + (uniform ? 14 : 0) + (noSpecifics ? 10 : 0))));
   },
 };
+/** Memoizes a detector for one request so repeated sections/lines are scored once. */
+export function memoDetector(detector: DetectorProvider): DetectorProvider {
+  const cache = new Map<string, Promise<number>>();
+  return { score(text) { if (!cache.has(text)) cache.set(text, detector.score(text)); return cache.get(text)!; } };
+}
 
 function safeProviderUrl(raw: string) {
   const url = new URL(raw);
@@ -81,7 +92,7 @@ export function humanizerFor(user: { humanizerKey: string | null; humanizerUrl?:
   return { async humanize(original, proposal, intensity, keywords) {
     try {
       const result = await providerCall<{ text: string }>(url, key, { original, text: proposal, intensity, protectedKeywords: keywords });
-      return result.text ? builtInHumanize(result.text) : builtInHumanizer.humanize(original, proposal, intensity, keywords);
+      return result.text ? builtInHumanize(result.text, { intensity, keepTerms: keywords }) : builtInHumanizer.humanize(original, proposal, intensity, keywords);
     } catch { return builtInHumanizer.humanize(original, proposal, intensity, keywords); }
   } };
 }

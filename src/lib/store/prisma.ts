@@ -1,6 +1,7 @@
 import { PrismaClient, Prisma } from "@prisma/client";
 import type { ApplicationInput, CompanyInput, JobInput, ResumeInput, SourceRun, UserRecord, Company, Job, Application, Resume, SavedJob, VisaFiling } from "../types";
 import { normalizeEmployer, currentFiscalYear } from "../sponsorship";
+import { companySearchToken, mergedSponsorship, pickSameRole } from "../dedupe";
 const globalPrisma = globalThis as typeof globalThis & { __bureauPrisma?: PrismaClient };
 const demoBuild = process.env.DEMO_MODE === "true" || (process.env.NODE_ENV !== "production" && !process.env.DATABASE_URL);
 export const prisma = demoBuild ? (null as unknown as PrismaClient) : (globalPrisma.__bureauPrisma || new PrismaClient());
@@ -47,19 +48,33 @@ export const prismaStore = {
     const j = await prisma.job.findFirst({ where: { id: jid, userId: uid }, include: { saved: true } });
     return j ? { ...plain<Job>(j), saved: !!j.saved } : null;
   },
-  async upsertJob(uid: string, input: JobInput): Promise<{ job: Job; created: boolean }> {
-    const existing = await prisma.job.findUnique({ where: { userId_canonicalKey: { userId: uid, canonicalKey: input.canonicalKey } } });
-    if (existing) {
-      const update: Prisma.JobUpdateInput = input.source === "HN_HIRING" && existing.source !== "HN_HIRING"
-        ? { hnUrl: input.hnUrl, lastSeenAt: new Date(), closedAt: null }
+  async upsertJob(uid: string, input: JobInput, opts: { fuzzy?: boolean } = {}): Promise<{ job: Job; created: boolean }> {
+    type Existing = { source: string; description: string; hnUrl: string | null; sponsorship: string; sponsorshipEvidence: string | null; evidenceSource: string | null };
+    const update = (existing: Existing): Prisma.JobUpdateInput =>
+      input.source === "HN_HIRING" && existing.source !== "HN_HIRING"
+        ? { hnUrl: input.hnUrl, lastSeenAt: new Date(), closedAt: null, ...(mergedSponsorship(existing, input) as Prisma.JobUpdateInput | null) }
+        : existing.source === "HN_HIRING" && input.source !== "HN_HIRING" && mergedSponsorship(input, existing)
+        ? { ...update({ ...existing, source: "COMPANY_BOARD" }), ...(mergedSponsorship(input, existing) as Prisma.JobUpdateInput) }
         : { ...input, source: existing.source === "YC_STARTUP" && input.source === "COMPANY_BOARD" ? "YC_STARTUP" : input.source,
           description: input.description || existing.description, hnUrl: input.hnUrl || existing.hnUrl,
-          sponsorship: input.description ? input.sponsorship : existing.sponsorship,
+          sponsorship: input.description ? input.sponsorship : existing.sponsorship as Job["sponsorship"],
           sponsorshipEvidence: input.description ? input.sponsorshipEvidence : existing.sponsorshipEvidence,
           evidenceSource: input.description ? input.evidenceSource : existing.evidenceSource,
           postedAt: dt(input.postedAt), company: input.companyId ? { connect: { id: input.companyId } } : { disconnect: true },
           companyId: undefined, lastSeenAt: new Date(), closedAt: null } as Prisma.JobUpdateInput;
-      const job = await prisma.job.update({ where: { id: existing.id }, data: update });
+    let existing = await prisma.job.findUnique({ where: { userId_canonicalKey: { userId: uid, canonicalKey: input.canonicalKey } } });
+    if (!existing && opts.fuzzy) {
+      // Cross-source dedupe: an HN post and a board posting for the same role at the same company
+      // become one job. The first-party board posting stays canonical; the HN link is kept.
+      const token = companySearchToken(input.companyName);
+      if (token) {
+        const candidates = await prisma.job.findMany({ where: { userId: uid, closedAt: null,
+          companyName: { contains: token, mode: "insensitive" }, source: input.source === "HN_HIRING" ? { not: "HN_HIRING" } : "HN_HIRING" }, take: 300 });
+        existing = pickSameRole(input, candidates);
+      }
+    }
+    if (existing) {
+      const job = await prisma.job.update({ where: { id: existing.id }, data: update(existing) });
       return { job: plain<Job>(job), created: false };
     }
     try {
@@ -120,6 +135,18 @@ export const prismaStore = {
     return plain<VisaFiling[]>(await prisma.visaFiling.findMany({ where: { fiscalYear: { gte: currentFiscalYear() - 2 }, employerNormalized: { startsWith: normalized.slice(0, Math.min(normalized.length, 4)) } }, take: 5000 }));
   },
   async insertFilings(rows: VisaFiling[]) { return (await prisma.visaFiling.createMany({ data: rows.map(({ id: _id, ...r }) => r), skipDuplicates: true })).count; },
+  /** Lease shared by every server instance; expires on its own if a worker dies mid-refresh. */
+  async acquireRefreshLock(uid: string, ms: number) {
+    const now = new Date();
+    const { count } = await prisma.user.updateMany({ where: { id: uid, OR: [{ refreshLockedUntil: null }, { refreshLockedUntil: { lt: now } }] },
+      data: { refreshLockedUntil: new Date(now.getTime() + ms) } });
+    return count === 1;
+  },
+  async releaseRefreshLock(uid: string) { await prisma.user.updateMany({ where: { id: uid }, data: { refreshLockedUntil: null } }); },
+  async lastRefreshTimes() {
+    const rows = await prisma.sourceRun.groupBy({ by: ["userId"], _max: { startedAt: true } });
+    return new Map(rows.map(r => [r.userId, r._max.startedAt?.toISOString() || null]));
+  },
   async lastRun(uid: string) { return plain<SourceRun | null>(await prisma.sourceRun.findFirst({ where: { userId: uid }, orderBy: { startedAt: "desc" } })); },
   async recordRun(uid: string, input: Omit<SourceRun, "id" | "userId">) {
     return plain<SourceRun>(await prisma.sourceRun.create({ data: { ...input, userId: uid, startedAt: new Date(input.startedAt), endedAt: dt(input.endedAt) } }));

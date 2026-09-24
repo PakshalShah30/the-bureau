@@ -6,6 +6,7 @@ import { useTheme } from "next-themes";
 import { useEffect, useState } from "react";
 import { LayoutDashboard, BriefcaseBusiness, Bookmark, Kanban, Building2, FileText, Settings2, LogOut, Menu, X, Moon, Sun, ChevronDown, ArrowUpRight, Sparkles, PanelLeftClose, PanelLeftOpen, ShieldCheck } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 const nav = [
   { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
   { label: "Job Feed", href: "/jobs", icon: BriefcaseBusiness },
@@ -22,7 +23,7 @@ export function Brand({ compact = false }: { compact?: boolean }) {
 }
 export function AppShell({ children, userName, email, demo }: { children: React.ReactNode; userName: string; email: string; demo: boolean }) {
   const path = usePathname(); const [mobileOpen, setMobileOpen] = useState(false); const [collapsed, setCollapsed] = useState(false);
-  const [menuOpen, setMenuOpen] = useState(false); const { theme, setTheme } = useTheme();
+  const { theme, setTheme } = useTheme();
   useEffect(() => { setMobileOpen(false); }, [path]);
   const current = nav.find(item => item.href === path || (item.href !== "/dashboard" && path.startsWith(item.href + "/")))?.label || "Dashboard";
   return <div className="min-h-screen">
@@ -59,9 +60,9 @@ export function AppShell({ children, userName, email, demo }: { children: React.
         <div className="flex items-center gap-2 sm:gap-4">
           {demo && <span className="hidden items-center gap-1.5 rounded-full bg-[#fff7e9] px-2.5 py-1 text-[11px] font-bold text-[#9e672a] dark:bg-[#473723] dark:text-[#eec487] md:inline-flex"><span className="h-1.5 w-1.5 rounded-full bg-amber-500" /> Preview mode</span>}
           <button aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"} onClick={() => setTheme(theme === "dark" ? "light" : "dark")} className="flex h-9 w-9 items-center justify-center rounded-xl text-muted-foreground hover:bg-muted hover:text-foreground">{theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}</button>
-          <div className="relative"><button onClick={() => setMenuOpen(v => !v)} aria-expanded={menuOpen} className="flex items-center gap-2 rounded-xl p-1.5 hover:bg-muted"><span className="flex h-8 w-8 items-center justify-center rounded-full bg-[#e5e1fd] text-xs font-bold text-[#6352bd] dark:bg-[#433a76] dark:text-[#d4cafd]">{userName.split(" ").map(x => x[0]).join("").slice(0, 2).toUpperCase()}</span><ChevronDown size={14} className="hidden text-muted-foreground sm:block" /></button>
-            {menuOpen && <><button aria-label="Close account menu" onClick={() => setMenuOpen(false)} className="fixed inset-0 z-30 cursor-default" /><div className="absolute right-0 top-12 z-40 w-56 rounded-xl border border-border bg-card p-2 shadow-lift"><div className="border-b border-border px-3 py-2.5"><p className="text-sm font-bold">{userName}</p><p className="truncate text-xs text-muted-foreground">{email}</p></div><Link href="/settings" onClick={() => setMenuOpen(false)} className="mt-1 flex items-center gap-2 rounded-lg px-3 py-2 text-sm hover:bg-muted"><Settings2 size={15} /> Settings</Link><button onClick={() => signOut({ callbackUrl: "/login" })} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950"><LogOut size={15} /> Sign out</button></div></>}
-          </div>
+          <DropdownMenu><DropdownMenuTrigger aria-label="Account menu" className="flex items-center gap-2 rounded-xl p-1.5 outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-primary/30"><span className="flex h-8 w-8 items-center justify-center rounded-full bg-[#e5e1fd] text-xs font-bold text-[#6352bd] dark:bg-[#433a76] dark:text-[#d4cafd]">{userName.split(" ").map(x => x[0]).join("").slice(0, 2).toUpperCase()}</span><ChevronDown size={14} className="hidden text-muted-foreground sm:block" /></DropdownMenuTrigger>
+            <DropdownMenuContent align="end"><DropdownMenuLabel><p className="text-sm font-bold">{userName}</p><p className="truncate text-xs font-normal text-muted-foreground">{email}</p></DropdownMenuLabel><DropdownMenuSeparator /><DropdownMenuItem asChild><Link href="/settings"><Settings2 size={15} /> Settings</Link></DropdownMenuItem><DropdownMenuItem onSelect={() => signOut({ callbackUrl: "/login" })} className="text-rose-600 data-[highlighted]:bg-rose-50 dark:data-[highlighted]:bg-rose-950"><LogOut size={15} /> Sign out</DropdownMenuItem></DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </header>
       {demo && <div className="flex items-start gap-2 border-b border-[#f2e3c9] bg-[#fffbf3] px-5 py-2 text-[11px] leading-5 text-[#8a6736] dark:border-[#584a34] dark:bg-[#2b281e] dark:text-[#dec291] sm:px-8 lg:px-10"><ShieldCheck size={14} className="mt-0.5 shrink-0" /> Offline preview: sample applications and a dated snapshot of real first-party postings (checked Sep 23, 2026). Refresh needs outbound access; unavailable sources never close cached jobs.</div>}

@@ -4,7 +4,7 @@ import { Bookmark, ArrowUpRight, MapPin, Clock3 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import type { Job } from "@/lib/types";
 import { companyColors, initials, request } from "@/lib/client";
-import { SourceBadge, SponsorBadge } from "./job-badges";
+import { SnapshotBadge, SourceBadge, SponsorBadge } from "./job-badges";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { useEffect, useState } from "react";
@@ -49,7 +49,8 @@ export function JobCard({ job, compact = false, onSave }: { job: Job; compact?: 
     </div>
     <div className={cn("flex flex-wrap items-center gap-2", compact ? "mt-3" : "mt-4 border-t border-border/70 pt-4")}>
       <SourceBadge source={job.source} batch={!compact ? job.ycBatch : null} />
-      <SponsorBadge status={job.sponsorship} compact={compact} />
+      <SponsorBadge status={job.sponsorship} evidenceSource={job.evidenceSource} compact={compact} />
+      {job.snapshotAt && <SnapshotBadge at={job.snapshotAt} />}
       {!!job.closedAt && <span className="rounded-full border border-border px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">Closed</span>}
       {!compact && job.department && <span className="text-xs text-muted-foreground">{job.department}</span>}
     </div>

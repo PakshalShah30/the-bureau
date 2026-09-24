@@ -48,8 +48,9 @@ export function resolveSponsorship(description: string, filings: VisaFiling[], c
   const signal = statedSponsorship(description);
   if (signal.status !== "UNKNOWN") return signal;
   const recent = recentFilings(filings, company, override);
-  if (recent.some(f => f.source === "DOL_LCA" || (f.approvals || 0) > 0))
-    return { status: "LIKELY_HISTORY", evidence: null, evidenceSource: "DOL / USCIS employer history" };
+  const history = recent.filter(f => f.source === "DOL_LCA" || (f.approvals || 0) > 0);
+  if (history.length)
+    return { status: "LIKELY_HISTORY", evidence: null, evidenceSource: history.every(f => f.isSample) ? "Illustrative sample filings (not government data)" : "DOL / USCIS employer history" };
   return signal;
 }
 export function filingSummary(filings: VisaFiling[]) {
@@ -61,5 +62,6 @@ export function filingSummary(filings: VisaFiling[]) {
     uscisApprovals: filings.filter(f => f.source === "USCIS").reduce((n, f) => n + (f.approvals || 0), 0),
     uscisDenials: filings.filter(f => f.source === "USCIS").reduce((n, f) => n + (f.denials || 0), 0),
     medianWage, commonTitles: [...titleCounts].sort((a, b) => b[1] - a[1]).slice(0, 5).map(([title, count]) => ({ title, count })),
-    years: [...new Set(filings.map(f => f.fiscalYear))].sort((a, b) => b - a) };
+    years: [...new Set(filings.map(f => f.fiscalYear))].sort((a, b) => b - a),
+    sample: filings.length > 0 && filings.some(f => f.isSample) };
 }

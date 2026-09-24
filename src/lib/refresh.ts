@@ -5,6 +5,7 @@ import { recentFilings, resolveSponsorship } from "./sponsorship";
 import { llm } from "./ai/providers";
 import type { JobInput, SourceRun, VisaFiling } from "./types";
 import { iso } from "./utils";
+import { normalizeTitle } from "./dedupe";
 
 async function sponsorshipFor(job: JobInput, filings: VisaFiling[], employerOverride?: string | null): Promise<JobInput> {
   let signal = resolveSponsorship(job.description, filings, job.companyName, employerOverride);
@@ -18,15 +19,17 @@ async function sponsorshipFor(job: JobInput, filings: VisaFiling[], employerOver
     } catch { /* Rule-based classifier remains authoritative when model unavailable. */ }
   }
   // Explicit statements always override history; history only from imported government rows.
-  if (signal.status === "UNKNOWN" && recentFilings(filings, job.companyName, employerOverride).length)
-    signal = { status: "LIKELY_HISTORY", evidence: null, evidenceSource: "DOL / USCIS employer history" };
+  if (signal.status === "UNKNOWN") {
+    const recent = recentFilings(filings, job.companyName, employerOverride).filter(f => f.source === "DOL_LCA" || (f.approvals || 0) > 0);
+    if (recent.length) signal = { status: "LIKELY_HISTORY", evidence: null, evidenceSource: recent.every(f => f.isSample) ? "Illustrative sample filings (not government data)" : "DOL / USCIS employer history" };
+  }
   return { ...job, sponsorship: signal.status, sponsorshipEvidence: signal.evidence, evidenceSource: signal.evidenceSource };
 }
-// Avoid duplicate on-demand runs for the same user. Scheduled runs can be retried after failure.
-const inFlight = new Set<string>();
+// One refresh per user at a time across ALL server instances (DB lease), so cron and
+// on-demand runs never race. The lease expires by itself if a worker crashes.
+const LOCK_MS = 10 * 60_000;
 export async function refreshUser(uid: string, options: { includeHn?: boolean; companyId?: string } = {}) {
-  if (inFlight.has(uid)) throw new Error("A refresh is already running for this account");
-  inFlight.add(uid);
+  if (!await store.acquireRefreshLock(uid, LOCK_MS)) throw new Error("A refresh is already running for this account");
   const startedAt = iso();
   let added = 0, updated = 0, closed = 0;
   const errors: string[] = [];
@@ -44,10 +47,13 @@ export async function refreshUser(uid: string, options: { includeHn?: boolean; c
         try {
           const postings = await fetchBoard(co.atsType, co.boardSlug);
           const seen = new Set<string>();
+          // Only a title that is unique on this board may absorb a matching HN post.
+          const titleCounts = new Map<string, number>();
+          for (const raw of postings) titleCounts.set(normalizeTitle(raw.title), (titleCounts.get(normalizeTitle(raw.title)) || 0) + 1);
           for (const raw of postings) {
             const input = await sponsorshipFor(postingToJob(raw, co), await filingsFor(co.name, co.employerOverride), co.employerOverride);
             seen.add(input.canonicalKey);
-            const result = await store.upsertJob(uid, input);
+            const result = await store.upsertJob(uid, input, { fuzzy: titleCounts.get(normalizeTitle(raw.title)) === 1 });
             if (result.created) added++; else updated++;
           }
           closed += await store.closeMissing(uid, "COMPANY_BOARD", [...seen], co.id);
@@ -67,7 +73,7 @@ export async function refreshUser(uid: string, options: { includeHn?: boolean; c
         for (const job of thread.jobs) {
           const input = await sponsorshipFor(job, await filingsFor(job.companyName));
           seen.push(input.canonicalKey);
-          const result = await store.upsertJob(uid, input);
+          const result = await store.upsertJob(uid, input, { fuzzy: true });
           if (result.created) added++; else updated++;
         }
         if (thread.complete) closed += await store.closeMissing(uid, "HN_HIRING", seen, undefined, thread.url);
@@ -76,5 +82,5 @@ export async function refreshUser(uid: string, options: { includeHn?: boolean; c
     }
     const result: Omit<SourceRun, "id" | "userId"> = { startedAt, endedAt: iso(), added, updated, closed, errors };
     return await store.recordRun(uid, result);
-  } finally { inFlight.delete(uid); }
+  } finally { await store.releaseRefreshLock(uid).catch(() => undefined); }
 }

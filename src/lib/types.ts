@@ -20,6 +20,8 @@ export interface Job {
   firstSeenAt: string; lastSeenAt: string; closedAt: string | null;
   sponsorship: Sponsorship; sponsorshipEvidence: string | null; evidenceSource: string | null;
   saved?: boolean;
+  /** Demo preview only: when this saved copy was checked. Cleared by a successful live refresh. */
+  snapshotAt?: string | null;
 }
 export interface SavedJob {
   id: string; userId: string; jobId: string; notes: string; tags: string[]; createdAt: string;
@@ -41,6 +43,8 @@ export interface VisaFiling {
   employerName: string; employerNormalized: string; fiscalYear: number;
   title: string | null; worksite: string | null; wage: number | null;
   approvals: number | null; denials: number | null;
+  /** Illustrative seed row, clearly labelled in the UI. Removed when official data is imported. */
+  isSample: boolean;
 }
 export interface SourceRun {
   id: string; userId: string; startedAt: string; endedAt: string | null;
@@ -51,7 +55,7 @@ export interface UserRecord {
   lastVisitedAt: string | null; humanizationIntensity: Intensity;
   humanizerKey: string | null; detectorKey: string | null; humanizerUrl: string | null; detectorUrl: string | null;
 }
-export type JobInput = Omit<Job, "id" | "userId" | "firstSeenAt" | "lastSeenAt" | "closedAt" | "saved">;
+export type JobInput = Omit<Job, "id" | "userId" | "firstSeenAt" | "lastSeenAt" | "closedAt" | "saved" | "snapshotAt">;
 export type CompanyInput = Omit<Company, "id" | "userId" | "createdAt" | "lastFetchedAt" | "lastError">;
 export type ApplicationInput = Pick<Application, "jobId" | "title" | "companyName" | "status" | "appliedAt" | "followUpAt" | "resumeId" | "notes">;
 export type ResumeInput = Pick<Resume, "name" | "content" | "filename" | "mimeType" | "version" | "parentId" | "jobId" | "atsScore" | "aiLikelihood">;
