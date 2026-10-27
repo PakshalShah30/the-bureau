@@ -49,6 +49,8 @@ export interface VisaFiling {
 export interface SourceRun {
   id: string; userId: string; startedAt: string; endedAt: string | null;
   added: number; updated: number; closed: number; errors: string[];
+  /** "full" = all tracked boards + HN; "company" = a single board refreshed on demand. */
+  scope: "full" | "company";
 }
 export interface UserRecord {
   id: string; email: string; name: string | null; passwordHash: string | null;

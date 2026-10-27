@@ -2,6 +2,7 @@ import type { Intensity } from "../types";
 import { decrypt } from "../secrets";
 import { assertPublicHost } from "../network";
 import { builtInHumanize } from "./humanize";
+import { adapterFor, builtInScore } from "./detector";
 
 export interface LLMProvider {
   completeJson<T>(system: string, user: string): Promise<T>;
@@ -45,26 +46,9 @@ export const builtInHumanizer: HumanizerProvider = {
     } catch { return cleaned; } // built-in fallback on network/provider failure
   },
 };
-const DETECTOR_CLICHES = /\b(spearheaded|leveraged|leveraging|utilized|seamless(?:ly)?|dynamic|results-driven|passionate about|cutting-edge|robust|innovative|fast-paced|synerg\w*|orchestrated|meticulous(?:ly)?|pivotal|testament|delve[ds]?|state-of-the-art|best-in-class|world-class|fostered)\b/gi;
 export const builtInDetector: DetectorProvider = {
-  // Transparent writing-pattern heuristic (stock phrasing, repeated openers, uniform rhythm).
-  async score(text) {
-    if (!text.trim()) return 0;
-    const lines = text.split(/\n/).map(l => l.trim()).filter(Boolean);
-    const bullets = lines.filter(line => /^[-•*·▪◦]/.test(line)).map(b => b.replace(/^[-•*·▪◦]\s*/, ""));
-    const sentences = (bullets.length ? bullets : text.split(/(?<=[.!?])\s+/)).map(s => s.trim()).filter(s => s.split(/\s+/).length > 2);
-    const words = Math.max(1, text.split(/\s+/).length);
-    const cliches = (text.match(DETECTOR_CLICHES) || []).length;
-    const starts = sentences.map(b => b.split(/\s+/)[0].toLowerCase());
-    const repeats = starts.length - new Set(starts).size;
-    const lengths = sentences.map(s => s.split(/\s+/).length);
-    const mean = lengths.reduce((a, b) => a + b, 0) / Math.max(1, lengths.length);
-    const spread = lengths.length >= 3 ? Math.sqrt(lengths.reduce((a, b) => a + (b - mean) ** 2, 0) / lengths.length) / Math.max(1, mean) : 1;
-    const uniform = lengths.length >= 3 && spread < 0.18;
-    const noSpecifics = sentences.length > 0 && !/\d/.test(text) && !/\b[A-Z][a-zA-Z]+[A-Z.]/.test(text);
-    const density = Math.min(30, Math.round((cliches / words) * 400));
-    return Math.max(0, Math.min(100, Math.round(12 + cliches * 10 + density + repeats * 12 + (uniform ? 14 : 0) + (noSpecifics ? 10 : 0))));
-  },
+  // Transparent writing-signal estimate (see ./detector.ts), not proof of authorship.
+  async score(text) { return builtInScore(text); },
 };
 /** Memoizes a detector for one request so repeated sections/lines are scored once. */
 export function memoDetector(detector: DetectorProvider): DetectorProvider {
@@ -77,11 +61,11 @@ function safeProviderUrl(raw: string) {
   if (url.protocol !== "https:" || !["", "443"].includes(url.port) || url.username || url.password) throw new Error("Provider URL must be a public HTTPS endpoint");
   return url.toString();
 }
-async function providerCall<T>(url: string, key: string, body: unknown) {
+async function providerCall<T>(url: string, key: string, body: unknown, headers: Record<string, string> = { Authorization: `Bearer ${key}` }) {
   const endpoint = safeProviderUrl(url);
   await assertPublicHost(new URL(endpoint).hostname);
   const response = await fetch(endpoint, { method: "POST", redirect: "error", signal: AbortSignal.timeout(12000),
-    headers: { "content-type": "application/json", Authorization: `Bearer ${key}` }, body: JSON.stringify(body) });
+    headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body) });
   if (!response.ok) throw new Error(`Provider returned HTTP ${response.status}`);
   return response.json() as Promise<T>;
 }
@@ -100,11 +84,13 @@ export function detectorFor(user: { detectorKey: string | null; detectorUrl?: st
   const key = user.detectorKey ? decrypt(user.detectorKey) : process.env.DETECTOR_API_KEY;
   const url = user.detectorUrl || process.env.DETECTOR_API_URL;
   if (!key || !url) return builtInDetector;
+  // Known services (GPTZero, Sapling) get their own request/response format; others use the generic contract.
+  const adapter = adapterFor(url);
   return { async score(text) {
     try {
-      const result = await providerCall<{ score: number }>(url, key, { text });
-      if (!Number.isFinite(result.score)) throw new Error("Invalid score");
-      return Math.max(0, Math.min(100, Math.round(result.score)));
+      const { headers, body } = adapter.request(text, key);
+      const value = adapter.parse(await providerCall<unknown>(url, key, body, headers));
+      return Math.max(0, Math.min(100, Math.round(value)));
     } catch { return builtInDetector.score(text); }
   } };
 }

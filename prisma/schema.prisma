@@ -241,6 +241,8 @@ model SourceRun {
   updated   Int      @default(0)
   closed    Int      @default(0)
   errors    String[] @default([])
+  scope     String   @default("full") // "full" or "company"; only full runs reset the schedule
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   @@index([userId, startedAt])
+  @@index([userId, scope, startedAt])
 }

@@ -60,11 +60,27 @@ URLs used by the adapters: `boards-api.greenhouse.io/v1/boards/{slug}/jobs?conte
 
 ## Automatic refresh and operations
 
-`vercel.json` calls `GET /api/cron/refresh` **hourly**. Each call refreshes only users whose last refresh is older than ~6 hours, **stalest first**, three at a time, within a ~230 s budget (under the 300 s function limit). Users that don't fit are picked up by the next hourly call, so every user is refreshed about every 6 hours without one long request. Set `CRON_SECRET` in the deployment environment. The endpoint accepts only `Authorization: Bearer <CRON_SECRET>`; in demo mode it returns 400. Vercel plans limit cron frequency (Hobby: daily): on such a platform use an external scheduler with the same endpoint:
+`GET /api/cron/refresh` should be called **hourly**. Each call refreshes only users whose last *full* refresh is older than ~6 hours, **stalest first**, three at a time, within a ~230 s budget (under the 300 s function limit). Users that don't fit are picked up by the next call, so every user is refreshed about every 6 hours. Extra calls are harmless. Refreshing a single company on demand is recorded as a `company`-scope run and does **not** postpone the user's full refresh. The endpoint accepts only `Authorization: Bearer <CRON_SECRET>`; in demo mode it returns 400.
+
+Two schedulers are included:
+
+- **GitHub Actions (free, hourly, any host):** `.github/workflows/refresh-jobs.yml`. Add the repository secrets `APP_URL` (e.g. `https://your-app.vercel.app`) and `CRON_SECRET` (the same value as the deployment's). Without them the workflow skips itself. Run it manually from the Actions tab to test.
+- **Vercel cron (backup):** `vercel.json` calls the endpoint daily at 06:00 UTC, which the Hobby plan allows. On Pro you can change it to `0 * * * *` and drop the GitHub workflow.
+
+Any other scheduler works too:
 
 ```cron
 0 * * * * curl -fsS -H "Authorization: Bearer $CRON_SECRET" https://YOUR_DOMAIN/api/cron/refresh
 ```
+
+### Check the live sources
+
+```bash
+npm run sources:check          # the 10 seed boards + latest HN thread + YC directory
+npm run sources:check -- --db  # every board tracked in PostgreSQL
+```
+
+Prints one PASS/FAIL line per source, with posting counts or the network error (e.g. `ENOTFOUND`), and exits non-zero if any source fails. Run it first on a new deployment or after changing egress rules.
 
 There is also an authenticated **Refresh jobs** button / `POST /api/jobs/refresh` (optional `{ "companyId": "..." }` to refresh one tracked board). Results and individual source errors appear in the feed; a successful board fetch is required before any missing jobs from that board are closed. Failed HN fetches/partial threads do not close HN jobs. Only one refresh per user runs at a time **across all server instances**: a lease stored in `User.refreshLockedUntil` (10 minutes, released when the run finishes, expires on its own if a worker crashes). Cron and on-demand refreshes share it. A one-minute cooldown applies to successful on-demand refreshes.
 
@@ -72,13 +88,23 @@ Listings retain exact original apply URLs, source badges, posted dates when prov
 
 ## Government H-1B evidence (opt-in import)
 
-Download the actual public **LCA disclosure** CSV/CSV.GZ/XLSX from [DOL OFLC performance data](https://www.dol.gov/agencies/eta/foreign-labor/performance) and/or the public employer-level file from [USCIS H-1B Employer Data Hub](https://www.uscis.gov/tools/reports-and-studies/h-1b-employer-data-hub). Put large downloads in ignored `data/`, **not in Git**. Inspect the header row to ensure it contains the supported FY, employer, status/case number and approval/denial fields; the importer prints accepted-row counts and fails on zero matches.
+**Automatic (recommended):**
+
+```bash
+npm run h1b:fetch -- --dry-run   # list the files it would download
+npm run h1b:fetch                # download into data/h1b/ (git-ignored) and import
+```
+
+It reads the agencies' own pages ([DOL OFLC performance data](https://www.dol.gov/agencies/eta/foreign-labor/performance), [USCIS H-1B Employer Data Hub](https://www.uscis.gov/tools/reports-and-studies/h-1b-employer-data-hub)), picks the newest DOL LCA quarterly files and USCIS exports covering the last 3 fiscal years, downloads them (dol.gov and uscis.gov only, cached by size), imports them, and deletes the sample rows. **Agencies rename files from time to time:** if discovery finds nothing, update `linkPattern` in `scripts/h1b-sources.json`, or list direct file URLs under `overrides`. `.github/workflows/h1b-data.yml` runs this quarterly once you add a `DATABASE_URL` repository secret (without it, the workflow only lists the files).
+
+**Manual:** download the LCA CSV/CSV.GZ/XLSX and/or USCIS CSV yourself into `data/` (not Git) and run:
 
 ```bash
 npm run h1b:import -- --lca data/LCA_FY2026.xlsx --uscis data/USCIS_FY2026.csv
-# Either --lca or --uscis can be used separately. Re-run after each government release.
-# Then refresh the jobs feed to recompute badges.
+# --lca and --uscis can be repeated or used separately. Re-run after each government release.
 ```
+
+Either way, the importer prints accepted-row counts and fails on zero matches. Badges update on each user's next refresh.
 
 The streaming importer accepts `.csv`, `.csv.gz` and `.xlsx`, uses H-1B **certified** LCA records from the most recent three fiscal years, deduplicates LCA case numbers, and upserts USCIS employer/year adjudication totals. DOL hourly/monthly wages are converted to an annual *offered* amount; the median is not a salary guarantee. USCIS totals are adjudications, not workers hired. The app matches conservative normalized employer names, allows a precise legal-filer alias override in company settings, and displays the actual imported titles, worksite, wage (if available), approvals/denials and official source links. A clear **no sponsorship** or **sponsorship available** policy stated in the *job itself* always overrides employer history. If neither a statement nor matching recent filings exists, the status is **Unknown**, never “doesn't sponsor.”
 
@@ -95,19 +121,27 @@ Upload a text-based PDF/DOCX (max 5 MB) or paste text, select a job, and request
 
 Missing skills require a separate explicit confirmation and are never inserted by the model. Every suggested and re-humanized line is checked for changes to numbers/dates, achievement claims (verbs are compared by meaning group: "reduced" ≈ "cut", but "reduced" ≠ "increased"), known and job-specific tools, named entities, negation and claim retention; unsafe lines cannot be accepted or exported. The final version passes another fact-lock and ATS recheck before it is stored and linked to the application. Downloadable DOCX and PDF files are generated from that saved text. The PDF bundles open-licensed Unicode fonts so accented names are not silently stripped; an unsupported glyph produces an explicit error, while DOCX preserves the original text.
 
-The default “AI-likelihood” score is a **simple writing-pattern heuristic**, not a reliable AI detector; neither this score nor the ATS keyword percentage is an ATS vendor score or a guarantee. The lexical fact-lock is intentionally conservative but **cannot prove semantic equivalence**: review every suggestion and exported file yourself, especially employer names, achievements, dates, numbers and formatting.
+The default “AI-likelihood” score (`src/lib/ai/detector.ts`) combines measurable writing signals, each with a capped weight:
+- density of stock AI phrases and of over-used corporate words
+- repeated bullet openers and repeated tails such as ", resulting in…"
+- how much sentence length varies
+- vocabulary variety (moving type/token ratio)
+- concrete details: numbers, dates, tool and product names
+
+Template-like text scores high and specific text scores low. It is still an **estimate, not proof of authorship**. For a third-party detector, pick **GPTZero** or **Sapling** in Settings → AI-likelihood detector and paste your key; those services' own request/response formats are built in. Any other service can use the generic contract below. Neither score nor the ATS keyword percentage is an ATS vendor score or a guarantee. The lexical fact-lock is intentionally conservative but **cannot prove semantic equivalence**: review every suggestion and exported file yourself, especially employer names, achievements, dates, numbers and formatting.
 
 You may configure per-user humanizer/detector endpoints and API keys in Settings, or set `HUMANIZER_API_URL` / `HUMANIZER_API_KEY` and `DETECTOR_API_URL` / `DETECTOR_API_KEY` on the server. Provider contracts:
 
 - Humanizer: `POST` JSON `{ original, text, intensity, protectedKeywords }` → `{ "text": "..." }`.
-- Detector: `POST` JSON `{ text }` → `{ "score": 0..100 }`.
+- Detector (custom endpoint): `POST` JSON `{ text }` → `{ "score": 0..100 }`. GPTZero (`api.gptzero.me`) and Sapling (`api.sapling.ai`) endpoints are detected by host and use their native APIs instead.
 
-Both use `Authorization: Bearer <key>`, HTTPS and a timeout; failing or missing providers fall back to built-ins. User-specific keys are AES-GCM-encrypted in the DB, never sent back to the browser. **Do not point provider URLs at untrusted services:** they receive private resume text. A public-host DNS preflight and disabled redirects reduce SSRF risk, but production egress restrictions are recommended.
+The humanizer and custom detector endpoints use `Authorization: Bearer <key>`; all providers use HTTPS and a timeout; failing or missing providers fall back to built-ins. User-specific keys are AES-GCM-encrypted in the DB, never sent back to the browser. **Do not point provider URLs at untrusted services:** they receive private resume text. A public-host DNS preflight and disabled redirects reduce SSRF risk, but production egress restrictions are recommended.
 
 ## Verify and maintain
 
 ```bash
-npm test           # provenance, sponsorship, importer mapping, keyword extraction, humanizer, fact-lock, dedupe; all migrations applied in PGlite
+npm test           # provenance, sponsorship, importer mapping, H-1B file discovery, keyword extraction, humanizer, detector, fact-lock, dedupe; all migrations applied in PGlite
+npm run sources:check  # live reachability of every job source (needs internet)
 npm run typecheck  # TypeScript
 npm run lint       # ESLint
 npm run build      # production Next.js build (requires Prisma engine binaries)

@@ -7,7 +7,7 @@ import ExcelJS from "exceljs";
 import { PrismaClient } from "@prisma/client";
 import { clean, lcaRow, uscisRow, type Row } from "../src/lib/h1b";
 import type { VisaFiling } from "../src/lib/types";
-const prisma = new PrismaClient();
+export const prisma = new PrismaClient();
 async function* rows(file: string): AsyncGenerator<Row> {
   const path = resolve(file);
   if (/\.xlsx$/i.test(path)) {
@@ -27,7 +27,7 @@ async function* rows(file: string): AsyncGenerator<Row> {
     for await (const row of parser) yield row as Row;
   } else throw new Error("Use a government CSV, .csv.gz or .xlsx download");
 }
-async function importFile(file: string, kind: "lca" | "uscis") {
+export async function importFile(file: string, kind: "lca" | "uscis") {
   let read = 0, accepted = 0, inserted = 0; const batch: VisaFiling[] = [];
   async function flush() {
     if (!batch.length) return;
@@ -53,11 +53,18 @@ async function main() {
   if (!process.env.DATABASE_URL || process.env.DEMO_MODE === "true") throw new Error("Government import requires PostgreSQL mode");
   const args = process.argv.slice(2);
   if (!args.includes("--lca") && !args.includes("--uscis")) throw new Error("Usage: npm run h1b:import -- --lca path/to/DOL.xlsx --uscis path/to/USCIS.csv");
+  const lca: string[] = [], uscis: string[] = [];
   for (let i = 0; i < args.length; i++) {
-    if (args[i] === "--lca" && args[i + 1]) await importFile(args[++i], "lca");
-    else if (args[i] === "--uscis" && args[i + 1]) await importFile(args[++i], "uscis");
+    if (args[i] === "--lca" && args[i + 1]) lca.push(args[++i]);
+    else if (args[i] === "--uscis" && args[i + 1]) uscis.push(args[++i]);
   }
-  // Official data replaces the illustrative seed rows entirely.
+  await importFiles({ lca, uscis });
+}
+/** Imports official files, then removes the illustrative sample rows (only after every file succeeded). */
+export async function importFiles(files: { lca: string[]; uscis: string[] }) {
+  if (!process.env.DATABASE_URL || process.env.DEMO_MODE === "true") throw new Error("Government import requires PostgreSQL mode");
+  for (const file of files.lca) await importFile(file, "lca");
+  for (const file of files.uscis) await importFile(file, "uscis");
   const removed = await prisma.visaFiling.deleteMany({ where: { isSample: true } });
   if (removed.count) console.log(`Removed ${removed.count} illustrative sample filing rows.`);
   console.log("Refresh jobs to recompute sponsorship badges. Explicit job policies always override employer history.");

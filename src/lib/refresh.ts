@@ -80,7 +80,8 @@ export async function refreshUser(uid: string, options: { includeHn?: boolean; c
         else errors.push("HN: partial thread fetch; closing skipped");
       } catch (e) { errors.push(`HN: ${e instanceof Error ? e.message : "Source unavailable"}`); }
     }
-    const result: Omit<SourceRun, "id" | "userId"> = { startedAt, endedAt: iso(), added, updated, closed, errors };
+    const scope = options.companyId || options.includeHn === false ? "company" : "full";
+    const result: Omit<SourceRun, "id" | "userId"> = { startedAt, endedAt: iso(), added, updated, closed, errors, scope };
     return await store.recordRun(uid, result);
   } finally { await store.releaseRefreshLock(uid).catch(() => undefined); }
 }

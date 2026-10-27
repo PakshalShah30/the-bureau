@@ -144,7 +144,8 @@ export const prismaStore = {
   },
   async releaseRefreshLock(uid: string) { await prisma.user.updateMany({ where: { id: uid }, data: { refreshLockedUntil: null } }); },
   async lastRefreshTimes() {
-    const rows = await prisma.sourceRun.groupBy({ by: ["userId"], _max: { startedAt: true } });
+    // Only full runs count: refreshing one board must not postpone everyone else's boards.
+    const rows = await prisma.sourceRun.groupBy({ by: ["userId"], where: { scope: "full" }, _max: { startedAt: true } });
     return new Map(rows.map(r => [r.userId, r._max.startedAt?.toISOString() || null]));
   },
   async lastRun(uid: string) { return plain<SourceRun | null>(await prisma.sourceRun.findFirst({ where: { userId: uid }, orderBy: { startedAt: "desc" } })); },

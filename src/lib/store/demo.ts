@@ -161,7 +161,7 @@ export const demoStore = {
   async releaseRefreshLock(uid: string) { demoLocks.delete(uid); },
   async lastRefreshTimes() {
     const map = new Map<string, string | null>();
-    for (const run of state().runs) if (!map.get(run.userId) || map.get(run.userId)! < run.startedAt) map.set(run.userId, run.startedAt);
+    for (const run of state().runs) if ((run.scope ?? "full") === "full" && !map.get(run.userId) || map.get(run.userId)! < run.startedAt) map.set(run.userId, run.startedAt);
     return map;
   },
   async lastRun(uid: string) { return state().runs.filter(r => r.userId === uid).sort((a, b) => b.startedAt.localeCompare(a.startedAt))[0] || null; },
