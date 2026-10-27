@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { statedSponsorship, resolveSponsorship, employerMatches, recentFilings, filingSummary, currentFiscalYear } from "./sponsorship";
 import type { VisaFiling } from "./types";
 const filing: VisaFiling = { id: "f1", externalKey: "k1", source: "DOL_LCA", sourceUrl: "https://www.dol.gov/agencies/eta/foreign-labor/performance",
-  employerName: "Stripe, Inc.", employerNormalized: "stripe", fiscalYear: 2026, title: "Software Engineer", worksite: "New York, NY", wage: 145000, approvals: null, denials: null };
+  employerName: "Stripe, Inc.", employerNormalized: "stripe", fiscalYear: 2026, title: "Software Engineer", worksite: "New York, NY", wage: 145000, approvals: null, denials: null, isSample: false };
 describe("sponsorship hierarchy", () => {
   it("recognizes exact positive statement and preserves evidence", () => {
     expect(statedSponsorship("Other things. San Francisco in person - Visa sponsorship possible.")).toMatchObject({ status: "SPONSORS_STATED", evidence: "San Francisco in person - Visa sponsorship possible." });

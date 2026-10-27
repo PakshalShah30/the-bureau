@@ -1,0 +1,33 @@
+# Quarterly refresh of official H-1B data (DOL LCA + USCIS Employer Data Hub).
+# Setup: repo Settings → Secrets and variables → Actions → add DATABASE_URL (the production
+# PostgreSQL connection string). Badges update on each user's next scheduled refresh (within ~6 hours).
+name: H-1B data import
+on:
+  schedule:
+    - cron: "23 9 15 1,4,7,10 *" # mid-month after each DOL quarterly release
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx prisma generate
+      - name: Download and import official files
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "::notice::DATABASE_URL secret not set; listing files only."
+            npm run h1b:fetch -- --dry-run
+            exit 0
+          fi
+          npx prisma migrate deploy
+          npm run h1b:fetch

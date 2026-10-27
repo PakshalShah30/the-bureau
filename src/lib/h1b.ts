@@ -40,7 +40,7 @@ export function lcaRow(raw: Row): VisaFiling | null {
     title: get(row, "JOB_TITLE", "JOB_TITLE_1") || null,
     worksite: [get(row, "WORKSITE_CITY", "WORKSITE_CITY_1"), get(row, "WORKSITE_STATE", "WORKSITE_STATE_1")].filter(Boolean).join(", ") || null,
     wage: annualWage(get(row, "WAGE_RATE_OF_PAY_FROM", "WAGE_RATE_OF_PAY_FROM_1", "WAGE_RATE_OF_PAY"), get(row, "WAGE_UNIT_OF_PAY", "WAGE_UNIT_OF_PAY_1")),
-    approvals: null, denials: null };
+    approvals: null, denials: null, isSample: false };
 }
 export function uscisRow(raw: Row): VisaFiling | null {
   const row = normalized(raw);
@@ -57,5 +57,5 @@ export function uscisRow(raw: Row): VisaFiling | null {
   const identity = [year, employerNormalized, get(row, "TAX_ID", "TAX_ID_LAST_4"), get(row, "NAICS"), place, get(row, "ZIP", "ZIP_CODE")].join(":");
   return { id: crypto.randomUUID(), externalKey: hash(`USCIS:${identity}`), source: "USCIS", sourceUrl: USCIS,
     employerName: name, employerNormalized, fiscalYear: year, title: null,
-    worksite: place || null, wage: null, approvals, denials };
+    worksite: place || null, wage: null, approvals, denials, isSample: false };
 }

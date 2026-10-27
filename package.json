@@ -13,7 +13,9 @@
     "db:migrate": "prisma migrate deploy",
     "db:dev": "prisma migrate dev",
     "db:seed": "tsx prisma/seed.ts",
-    "h1b:import": "tsx scripts/import-h1b.ts"
+    "h1b:import": "tsx scripts/import-h1b.ts",
+    "sources:check": "tsx scripts/check-sources.ts",
+    "h1b:fetch": "tsx scripts/fetch-h1b.ts"
   },
   "dependencies": {
     "@auth/prisma-adapter": "^2.11.1",
@@ -67,5 +69,8 @@
     "tsx": "^4.20.5",
     "typescript": "^5.9.2",
     "vitest": "^3.2.4"
+  },
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
   }
 }

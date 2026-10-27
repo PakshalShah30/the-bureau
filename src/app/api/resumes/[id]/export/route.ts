@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireUser, unauthorized, notFound, apiError } from "@/lib/api";
 import { store } from "@/lib/store";
-import { atsScore, validateFinalResume, SKILLS } from "@/lib/ai/ats";
+import { atsScore, validateFinalResume } from "@/lib/ai/ats";
 import { detectorFor } from "@/lib/ai/providers";
 const schema = z.object({ jobId: z.string().min(1), content: z.string().min(30).max(120000),
   confirmedSkills: z.array(z.string()).max(20).default([]) });
@@ -12,13 +12,13 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     const { jobId, content, confirmedSkills } = schema.parse(await req.json());
     const [resume, job, user] = await Promise.all([store.getResume(uid, (await ctx.params).id), store.getJob(uid, jobId), store.getUser(uid)]);
     if (!resume || !job || !user) return notFound();
-    const gapSkills = atsScore(resume.content, job.description).missing;
-    if (confirmedSkills.some(skill => !SKILLS.includes(skill as typeof SKILLS[number]) || !gapSkills.includes(skill as typeof gapSkills[number])))
+    const before = atsScore(resume.content, job.description, { company: job.companyName });
+    if (confirmedSkills.some(skill => !before.missing.includes(skill)))
       throw new Error("Confirmed skills must be actual gaps in this job and explicitly selected.");
-    const guard = validateFinalResume(resume.content, content, confirmedSkills);
+    const guard = validateFinalResume(resume.content, content, confirmedSkills, before.keywords.map(k => k.term));
     if (!guard.safe) return NextResponse.json({ error: "Fact-lock blocked export", reasons: guard.reasons }, { status: 422 });
-    const beforeScore = atsScore(resume.content, job.description).score;
-    const score = atsScore(content, job.description).score;
+    const beforeScore = before.score;
+    const score = atsScore(content, job.description, { company: job.companyName }).score;
     const aiLikelihood = await detectorFor(user).score(content);
     const versions = (await store.listResumes(uid)).filter(r => r.parentId === resume.id || r.id === resume.id);
     const version = Math.max(...versions.map(v => v.version), resume.version) + 1;

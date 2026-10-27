@@ -1,6 +1,8 @@
 import type { Intensity } from "../types";
 import { decrypt } from "../secrets";
 import { assertPublicHost } from "../network";
+import { builtInHumanize } from "./humanize";
+import { adapterFor, builtInScore } from "./detector";
 
 export interface LLMProvider {
   completeJson<T>(system: string, user: string): Promise<T>;
@@ -30,47 +32,40 @@ export interface HumanizerProvider {
 export interface DetectorProvider {
   score(text: string): Promise<number>; // 0-100 heuristic/third-party estimate, NOT detection proof
 }
-export function builtInHumanize(text: string) {
-  return text.replace(/\bspearheaded\b/gi, "Led").replace(/\bleveraged\b/gi, "used")
-    .replace(/\butilized\b/gi, "used").replace(/\bseamlessly\s+/gi, "")
-    .replace(/\bdynamic\s+/gi, "").replace(/\bresults-driven\s+/gi, "")
-    .replace(/\bpassionate about\b/gi, "focused on").replace(/\s{2,}/g, " ").trim();
-}
+export { builtInHumanize };
 export const builtInHumanizer: HumanizerProvider = {
   async humanize(original, proposal, intensity, keywords) {
-    const cleaned = builtInHumanize(proposal);
+    const cleaned = builtInHumanize(proposal, { intensity, keepTerms: keywords });
     if (!process.env.LLM_API_KEY || intensity === "LIGHT") return cleaned;
     try {
       const answer = await llm.completeJson<{ text: string }>(
         "You are a careful resume editor. JSON only: {\"text\":\"...\"}. Rewrite ONLY the given bullet naturally. Vary structure, avoid generic AI phrasing, use concrete nouns and resume shorthand. Preserve every original fact, employer, title, number, date, tool and achievement. Do not add a skill. Keep all required ATS keywords when they are truthful. Strong intensity is concise and conversational, Medium is polished, Light is minimal. If uncertain, return the original bullet unchanged.",
         JSON.stringify({ original, proposal: cleaned, intensity, mustKeepKeywords: keywords })
       );
-      return typeof answer.text === "string" ? builtInHumanize(answer.text) : cleaned;
+      return typeof answer.text === "string" && answer.text.trim() ? builtInHumanize(answer.text, { intensity, keepTerms: keywords }) : cleaned;
     } catch { return cleaned; } // built-in fallback on network/provider failure
   },
 };
 export const builtInDetector: DetectorProvider = {
-  async score(text) {
-    if (!text.trim()) return 0;
-    const bullets = text.split(/\n/).filter(line => /^\s*[-•*]/.test(line));
-    const cliches = (text.match(/\b(spearheaded|leveraged|seamlessly|dynamic|results-driven|passionate about|cutting-edge|robust|innovative|fast-paced)\b/gi) || []).length;
-    const sameStart = bullets.map(b => b.replace(/^\s*[-•*]\s*/, "").split(" ")[0].toLowerCase());
-    const repeats = sameStart.length - new Set(sameStart).size;
-    const uniform = bullets.length >= 3 && Math.max(...bullets.map(b => b.length)) - Math.min(...bullets.map(b => b.length)) < 25;
-    return Math.min(100, Math.round(18 + cliches * 15 + repeats * 12 + (uniform ? 12 : 0)));
-  },
+  // Transparent writing-signal estimate (see ./detector.ts), not proof of authorship.
+  async score(text) { return builtInScore(text); },
 };
+/** Memoizes a detector for one request so repeated sections/lines are scored once. */
+export function memoDetector(detector: DetectorProvider): DetectorProvider {
+  const cache = new Map<string, Promise<number>>();
+  return { score(text) { if (!cache.has(text)) cache.set(text, detector.score(text)); return cache.get(text)!; } };
+}
 
 function safeProviderUrl(raw: string) {
   const url = new URL(raw);
   if (url.protocol !== "https:" || !["", "443"].includes(url.port) || url.username || url.password) throw new Error("Provider URL must be a public HTTPS endpoint");
   return url.toString();
 }
-async function providerCall<T>(url: string, key: string, body: unknown) {
+async function providerCall<T>(url: string, key: string, body: unknown, headers: Record<string, string> = { Authorization: `Bearer ${key}` }) {
   const endpoint = safeProviderUrl(url);
   await assertPublicHost(new URL(endpoint).hostname);
   const response = await fetch(endpoint, { method: "POST", redirect: "error", signal: AbortSignal.timeout(12000),
-    headers: { "content-type": "application/json", Authorization: `Bearer ${key}` }, body: JSON.stringify(body) });
+    headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body) });
   if (!response.ok) throw new Error(`Provider returned HTTP ${response.status}`);
   return response.json() as Promise<T>;
 }
@@ -81,7 +76,7 @@ export function humanizerFor(user: { humanizerKey: string | null; humanizerUrl?:
   return { async humanize(original, proposal, intensity, keywords) {
     try {
       const result = await providerCall<{ text: string }>(url, key, { original, text: proposal, intensity, protectedKeywords: keywords });
-      return result.text ? builtInHumanize(result.text) : builtInHumanizer.humanize(original, proposal, intensity, keywords);
+      return result.text ? builtInHumanize(result.text, { intensity, keepTerms: keywords }) : builtInHumanizer.humanize(original, proposal, intensity, keywords);
     } catch { return builtInHumanizer.humanize(original, proposal, intensity, keywords); }
   } };
 }
@@ -89,11 +84,13 @@ export function detectorFor(user: { detectorKey: string | null; detectorUrl?: st
   const key = user.detectorKey ? decrypt(user.detectorKey) : process.env.DETECTOR_API_KEY;
   const url = user.detectorUrl || process.env.DETECTOR_API_URL;
   if (!key || !url) return builtInDetector;
+  // Known services (GPTZero, Sapling) get their own request/response format; others use the generic contract.
+  const adapter = adapterFor(url);
   return { async score(text) {
     try {
-      const result = await providerCall<{ score: number }>(url, key, { text });
-      if (!Number.isFinite(result.score)) throw new Error("Invalid score");
-      return Math.max(0, Math.min(100, Math.round(result.score)));
+      const { headers, body } = adapter.request(text, key);
+      const value = adapter.parse(await providerCall<unknown>(url, key, body, headers));
+      return Math.max(0, Math.min(100, Math.round(value)));
     } catch { return builtInDetector.score(text); }
   } };
 }

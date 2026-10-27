@@ -1,0 +1,16 @@
+{
+  "$comment": "Where `npm run h1b:fetch` finds the official files. Agencies rename files over time: if discovery finds nothing, update linkPattern, or put direct file URLs in `overrides` (overrides skip discovery).",
+  "lca": {
+    "page": "https://www.dol.gov/agencies/eta/foreign-labor/performance",
+    "linkPattern": "LCA_Disclosure_Data_FY(20\\d{2})_Q([1-4])\\.xlsx",
+    "fiscalYears": 3,
+    "maxFiles": 12
+  },
+  "uscis": {
+    "page": "https://www.uscis.gov/tools/reports-and-studies/h-1b-employer-data-hub",
+    "linkPattern": "[^\"'<>\\s]*(20\\d{2})[^\"'<>\\s]*\\.csv",
+    "fiscalYears": 3,
+    "maxFiles": 3
+  },
+  "overrides": { "lca": [], "uscis": [] }
+}
