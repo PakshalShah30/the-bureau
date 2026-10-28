@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireUser, unauthorized, apiError } from "@/lib/api";
 import { refreshUser } from "@/lib/refresh";
 import { store } from "@/lib/store";
+import { manualRefreshBudgetMs } from "@/lib/budget";
 export const maxDuration = 300;
 export async function POST(req: Request) {
   const uid = await requireUser(); if (!uid) return unauthorized();
@@ -11,7 +12,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Refreshed less than a minute ago. Try again shortly." }, { status: 429 });
     const body = await req.json().catch(() => ({})) as { companyId?: string };
     if (body.companyId && !await store.getCompany(uid, body.companyId)) return NextResponse.json({ error: "Company not found" }, { status: 404 });
-    const run = await refreshUser(uid, { companyId: body.companyId });
+    const run = await refreshUser(uid, { companyId: body.companyId, deadline: Date.now() + manualRefreshBudgetMs() });
     return NextResponse.json({ run });
   } catch (e) { return apiError(e); }
 }

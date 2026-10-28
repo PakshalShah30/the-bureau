@@ -6,6 +6,7 @@ import { llm } from "./ai/providers";
 import type { JobInput, SourceRun, VisaFiling } from "./types";
 import { iso } from "./utils";
 import { normalizeTitle } from "./dedupe";
+import { HN_MIN_MS } from "./budget";
 
 async function sponsorshipFor(job: JobInput, filings: VisaFiling[], employerOverride?: string | null): Promise<JobInput> {
   let signal = resolveSponsorship(job.description, filings, job.companyName, employerOverride);
@@ -28,14 +29,20 @@ async function sponsorshipFor(job: JobInput, filings: VisaFiling[], employerOver
 // One refresh per user at a time across ALL server instances (DB lease), so cron and
 // on-demand runs never race. The lease expires by itself if a worker crashes.
 const LOCK_MS = 10 * 60_000;
-export async function refreshUser(uid: string, options: { includeHn?: boolean; companyId?: string } = {}) {
+/** Result of a refresh. `remaining` = boards skipped because the time budget ran out (picked up next run). */
+export type RefreshResult = SourceRun & { remaining: number; hnSkipped: boolean };
+export async function refreshUser(uid: string, options: { includeHn?: boolean; companyId?: string; deadline?: number } = {}): Promise<RefreshResult> {
   if (!await store.acquireRefreshLock(uid, LOCK_MS)) throw new Error("A refresh is already running for this account");
   const startedAt = iso();
   let added = 0, updated = 0, closed = 0;
   const errors: string[] = [];
   try {
     const all = await store.listCompanies(uid);
-    const companies = all.filter(c => c.active && (!options.companyId || c.id === options.companyId));
+    // Stalest boards first, so a run cut short by the time budget resumes where it stopped.
+    const companies = all.filter(c => c.active && (!options.companyId || c.id === options.companyId))
+      .sort((a, b) => (a.lastFetchedAt || "").localeCompare(b.lastFetchedAt || ""));
+    const outOfTime = (needMs = 0) => options.deadline != null && Date.now() + needMs > options.deadline;
+    let remaining = 0, hnSkipped = false;
     const filingCache = new Map<string, VisaFiling[]>();
     async function filingsFor(name: string, override?: string | null) {
       const key = `${name}::${override || ""}`;
@@ -43,6 +50,7 @@ export async function refreshUser(uid: string, options: { includeHn?: boolean; c
       return filingCache.get(key)!;
     }
     for (let i = 0; i < companies.length; i += 3) {
+      if (outOfTime()) { remaining = companies.length - i; break; }
       await Promise.all(companies.slice(i, i + 3).map(async co => {
         try {
           const postings = await fetchBoard(co.atsType, co.boardSlug);
@@ -66,7 +74,8 @@ export async function refreshUser(uid: string, options: { includeHn?: boolean; c
         }
       }));
     }
-    if (options.includeHn !== false && !options.companyId) {
+    if (options.includeHn !== false && !options.companyId && (remaining || outOfTime(HN_MIN_MS))) hnSkipped = true;
+    else if (options.includeHn !== false && !options.companyId) {
       try {
         const thread = await fetchLatestHnThread();
         const seen: string[] = [];
@@ -80,8 +89,9 @@ export async function refreshUser(uid: string, options: { includeHn?: boolean; c
         else errors.push("HN: partial thread fetch; closing skipped");
       } catch (e) { errors.push(`HN: ${e instanceof Error ? e.message : "Source unavailable"}`); }
     }
-    const scope = options.companyId || options.includeHn === false ? "company" : "full";
+    // Only complete runs reset the schedule; a partial run leaves the user due for the next call.
+    const scope = options.companyId || options.includeHn === false ? "company" : remaining || hnSkipped ? "partial" : "full";
     const result: Omit<SourceRun, "id" | "userId"> = { startedAt, endedAt: iso(), added, updated, closed, errors, scope };
-    return await store.recordRun(uid, result);
+    return { ...await store.recordRun(uid, result), remaining, hnSkipped };
   } finally { await store.releaseRefreshLock(uid).catch(() => undefined); }
 }

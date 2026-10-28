@@ -19,8 +19,9 @@ export default function DashboardPage() {
   useEffect(() => { request<Overview>("/api/overview").then(setData).catch(e => toast.error(e.message)); }, []);
   async function refresh() {
     setRefreshing(true);
-    try { const { run } = await request<{ run: SourceRun }>("/api/jobs/refresh", { method: "POST", body: "{}" });
+    try { const { run } = await request<{ run: SourceRun & { remaining?: number } }>("/api/jobs/refresh", { method: "POST", body: "{}" });
       if (run.errors.length) toast.warning(`Refresh finished with ${run.errors.length} unavailable source${run.errors.length > 1 ? "s" : ""}. Cached jobs were kept.`);
+      if (run.remaining) toast.info(`Time limit reached: ${run.remaining} board${run.remaining > 1 ? "s" : ""} will refresh on the next run.`);
       else toast.success(`${run.added} new jobs found`);
       setData(await request<Overview>("/api/overview"));
     } catch (e) { toast.error(e instanceof Error ? e.message : "Refresh failed"); }

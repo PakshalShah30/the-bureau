@@ -60,7 +60,17 @@ URLs used by the adapters: `boards-api.greenhouse.io/v1/boards/{slug}/jobs?conte
 
 ## Automatic refresh and operations
 
-`GET /api/cron/refresh` should be called **hourly**. Each call refreshes only users whose last *full* refresh is older than ~6 hours, **stalest first**, three at a time, within a ~230 s budget (under the 300 s function limit). Users that don't fit are picked up by the next call, so every user is refreshed about every 6 hours. Extra calls are harmless. Refreshing a single company on demand is recorded as a `company`-scope run and does **not** postpone the user's full refresh. The endpoint accepts only `Authorization: Bearer <CRON_SECRET>`; in demo mode it returns 400.
+`GET /api/cron/refresh` should be called **hourly**. Each call refreshes only users whose last *full* refresh is older than ~6 hours, **stalest first**, three at a time, within a time budget. Users that don't fit are picked up by the next call, so every user is refreshed about every 6 hours. Extra calls are harmless.
+
+**Time budget.** Routes ask for up to 300 s, but your plan may allow less. Set `FUNCTION_MAX_SECONDS` to your host's real limit (Vercel: **Project → Settings → Functions**):
+
+| Variable | Default | Effect |
+|---|---|---|
+| `FUNCTION_MAX_SECONDS` | `300` | Your plan's function limit. Budgets below are derived from it. |
+| `CRON_BUDGET_SECONDS` | 75% of the limit | Scheduled refresh stops starting new users/boards after this. Capped at limit − 5 s. |
+| `CRON_CONCURRENCY` | `3` | Users refreshed in parallel per call (1–10). |
+
+The **Refresh feed** button uses 80% of the limit. When time runs out, a refresh finishes the boards already in flight and starts no new ones. Boards are always refreshed **stalest first**, so the next run continues where the last one stopped. The HN thread is skipped if fewer than 25 s remain. A cut-off run is recorded as `partial`, so the user stays due and the next hourly call finishes the job. Running out of time is not counted as a source error, and nothing is closed for boards that weren't fetched. Example for a 60 s plan: `FUNCTION_MAX_SECONDS=60` gives a 45 s cron budget and a 48 s button budget. Refreshing a single company on demand is recorded as a `company`-scope run and does **not** postpone the user's full refresh. The endpoint accepts only `Authorization: Bearer <CRON_SECRET>`; in demo mode it returns 400.
 
 Two schedulers are included:
 
